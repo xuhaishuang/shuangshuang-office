@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>双双的温馨事务所 🏠</title>
+<style>
+:root{
+  --wall:#fef5e8;--floor:#d4a574;--floorLine:#c4956a;
+  --desk:#8B6914;--deskLight:#a07818;
+  --lampGlow:#ffe4a0;--blackboard:#2d4030;--boardFrame:#3a3028;
+  --writer:#ff8c42;--explorer:#5ba4cf;--dreamer:#c77dba;
+  --text:#4a3728;--warmBg:#fef9f2;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{
+  background:linear-gradient(135deg,#2c1810 0%,#3d2618 30%,#2a1815 100%);
+  display:flex;justify-content:center;align-items:center;
+  min-height:100vh;font-family:'Segoe UI','Microsoft YaHei',sans-serif;
+  user-select:none;overflow-y:auto;padding:12px;
+}
+.app{display:flex;flex-direction:column;align-items:center;gap:8px;}
+
+/* 画布容器 */
+.canvas-wrap{
+  position:relative;border-radius:18px;overflow:hidden;
+  box-shadow:0 0 80px rgba(255,160,100,.15),0 8px 32px rgba(0,0,0,.4);
+}
+canvas{display:block;}
+
+/* 顶部覆盖层：小招牌 */
+.signboard{
+  position:absolute;top:10px;left:50%;transform:translateX(-50%);
+  background:rgba(58,40,30,.85);color:#ffe4c0;
+  padding:4px 24px;border-radius:20px;font-size:13px;
+  font-weight:bold;letter-spacing:3px;pointer-events:none;
+  border:1px solid rgba(200,160,100,.3);
+}
+
+/* 底部输入区 */
+.input-area{
+  display:flex;gap:8px;width:100%;max-width:960px;
+}
+.task-input{
+  flex:1;padding:10px 16px;border-radius:22px;border:2px solid #5a3a20;
+  background:#fef5e8;color:#3a2010;font-size:14px;outline:none;
+  font-family:inherit;letter-spacing:1px;
+}
+.task-input::placeholder{color:#b8a088;}
+.task-input:focus{border-color:#d4855e;box-shadow:0 0 0 3px rgba(212,133,94,.2);}
+.btn-add{
+  padding:10px 22px;border-radius:22px;border:none;
+  background:linear-gradient(135deg,#d4855e,#b8603a);
+  color:#fff;font-weight:bold;cursor:pointer;font-size:14px;
+  letter-spacing:2px;transition:all .25s;
+}
+.btn-add:hover{box-shadow:0 4px 16px rgba(212,133,94,.4);transform:translateY(-1px);}
+
+/* 统计区 */
+.stats{
+  display:flex;gap:16px;align-items:center;
+  color:#ffe4c0;font-size:12px;letter-spacing:2px;
+}
+.stat-num{font-size:22px;font-weight:900;color:#ffb380;}
+
+/* 角色状态标签 */
+.role-tags{
+  display:flex;gap:12px;flex-wrap:wrap;justify-content:center;
+}
+.role-tag{
+  padding:3px 14px;border-radius:12px;font-size:11px;font-weight:bold;
+  letter-spacing:1px;opacity:.7;transition:all .4s;
+}
+.role-tag.working{opacity:1;box-shadow:0 0 12px currentColor;}
+.tag-writer{background:rgba(255,140,66,.15);color:#ffa86c;border:1px solid #ff8c4244;}
+.tag-explorer{background:rgba(91,164,207,.15);color:#7cc4e8;border:1px solid #5ba4cf44;}
+.tag-dreamer{background:rgba(199,125,186,.15);color:#e0a8d8;border:1px solid #c77dba44;}
+.tag-writer.working{background:rgba(255,140,66,.3);box-shadow:0 0 14px rgba(255,140,66,.4);}
+.tag-explorer.working{background:rgba(91,164,207,.3);box-shadow:0 0 14px rgba(91,164,207,.4);}
+.tag-dreamer.working{background:rgba(199,125,186,.3);box-shadow:0 0 14px rgba(199,125,186,.4);}
+
+.hint-text{color:#806050;font-size:11px;letter-spacing:2px;text-align:center;}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="canvas-wrap" id="wrap">
+    <canvas id="c" width="960" height="580"></canvas>
+    <div class="signboard">✨ 双双的温馨事务所 ✨</div>
+  </div>
+
+  <div class="role-tags" id="roleTags">
+    <span class="role-tag tag-writer" id="tagWriter">✍️ 执笔人 · 空闲</span>
+    <span class="role-tag tag-explorer" id="tagExplorer">🔍 探路者 · 空闲</span>
+    <span class="role-tag tag-dreamer" id="tagDreamer">🎨 造梦师 · 空闲</span>
+  </div>
+
+  <div class="input-area">
+    <input class="task-input" id="taskInput" placeholder="输入任务，系统自动分配角色…" maxlength="60" />
+    <button class="btn-add" onclick="addTask()">📋 添加</button>
+  </div>
+
+  <div class="stats">
+    <span>今日完成：</span><span class="stat-num" id="doneCount">0</span><span>件</span>
+  </div>
+  <div class="hint-text">💡 试试输入：写一篇文案 / 分析本周数据 / 做一张封面图</div>
+</div>
+
+<script>
+// ==================== 常量与配置 ====================
+const C=document.getElementById('c'),ctx=C.getContext('2d');
+const W=C.width,H=C.height;
+let time=0,doneCount=0;
+let particles=[],notes=[],bubbles=[];
+let tasks=[]; // {id,text,assignedTo,status:'pending'|'working'|'done',charId}
+
+// ==================== 房间布局常量 ====================
+const ROOM={x:30,y:25,w:900,h:530};
+const FLOOR_Y=60;
+const DESKS={
+  writer:{cx:200,cy:380,w:140,h:90,label:'执笔人书桌'},
+  explorer:{cx:480,cy:360,w:150,h:95,label:'探路者书桌'},
+  dreamer:{cx:760,cy:375,w:140,h:90,label:'造梦师书桌'},
+};
+const BLACKBOARD={x:340,y:14,w:280,h:55};
+const WINDOW={x:32,y:310,w:18,h:120};
+const DOG={x:830,y:490,homeX:830,homeY:490};
+const PLANT={x:42,y:420,homeX:42,homeY:420};
+
+// ==================== 角色定义 ====================
+const CHARS=[
+  {
+    id:'writer',name:'执笔人',role:'editor',color:'#ff8c42',lightColor:'#ffb380',
+    desk:DESKS.writer,homeX:160,homeY:300,deskX:DESKS.writer.cx,deskY:DESKS.writer.cy-60,
+    x:160,y:300,targetX:160,targetY:300,
+    state:'idle',task:null,progress:0,workSpeed:.003+.002*Math.random(),
+    wanderTimer:0,wanderPause:0,animTimer:0,
+    bubble:null, // {text,life}
+  },
+  {
+    id:'explorer',name:'探路者',role:'ops',color:'#5ba4cf',lightColor:'#8cc8e8',
+    desk:DESKS.explorer,homeX:480,homeY:280,deskX:DESKS.explorer.cx,deskY:DESKS.explorer.cy-65,
+    x:480,y:280,targetX:480,targetY:280,
+    state:'idle',task:null,progress:0,workSpeed:.0035+.002*Math.random(),
+    wanderTimer:0,wanderPause:0,animTimer:0,
+    bubble:null,
+  },
+  {
+    id:'dreamer',name:'造梦师',role:'design',color:'#c77dba',lightColor:'#e0a8d8',
+    desk:DESKS.dreamer,homeX:800,homeY:300,deskX:DESKS.dreamer.cx,deskY:DESKS.dreamer.cy-60,
+    x:800,y:300,targetX:800,targetY:300,
+    state:'idle',task:null,progress:0,workSpeed:.003+.002*Math.random(),
+    wanderTimer:0,wanderPause:0,animTimer:0,
+    bubble:null,
+  },
+];
+
+// ==================== 柴犬状态 ====================
+let dog={...DOG,flipTimer:0,yawnTimer:0,legKick:0,tailWag:0};
+
+// ==================== 植物状态 ====================
+let plant={sway:0,swaySpd:.03};
+
+// ==================== 粒子/特效系统 ====================
+function spawnParticles(x,y,color,count,type){
+  for(let i=0;i<count;i++){
+    let a=Math.random()*Math.PI*2,s=.5+Math.random()*2.5;
+    particles.push({
+      x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-(type==='up'?1+Math.random()*3:0),
+      life:1,decay:.01+Math.random()*.03,size:1.5+Math.random()*3.5,color,
+      type:type||'burst',
+    });
+  }
+}
+function spawnBubble(x,y,text,color){
+  bubbles.push({x,y,text,color,life:1,decay:.005,vy:-.3});
+}
+function spawnNote(fromX,fromY,toX,toY,color){
+  notes.push({x:fromX,y:fromY,fromX,fromY,toX,toY,progress:0,speed:.008+.004*Math.random(),color,life:1});
+}
+
+// ==================== 任务分配 ====================
+function assignRole(text){
+  let t=text.toLowerCase();
+  if(/写|编辑|润色|文案|笔记|文字|修改|校对|稿|笔/.test(t))return'writer';
+  if(/选题|数据|运营|分析|策划|调研|报告|统计|指标|排期/.test(t))return'explorer';
+  if(/封面|设计|图片|画|视觉|素材|图|海报|配色|排版/.test(t))return'dreamer';
+  // 默认轮流分配
+  let counts={writer:0,explorer:0,dreamer:0};
+  tasks.forEach(tk=>{if(tk.charId)counts[tk.charId]++;});
+  let min=Math.min(counts.writer,counts.explorer,counts.dreamer);
+  if(counts.writer===min)return'writer';
+  if(counts.explorer===min)return'explorer';
+  return'dreamer';
+}
+function addTask(){
+  let inp=document.getElementById('taskInput');
+  let text=inp.value.trim();
+  if(!text)return;
+  let charId=assignRole(text);
+  let charIdx=CHARS.findIndex(c=>c.id===charId);
+  let task={id:Date.now(),text,charId,status:'pending',charIdx};
+  tasks.push(task);
+  // 分配给角色
+  let ch=CHARS[charIdx];
+  if(ch.state==='idle'){
+    ch.task=task;ch.state='walking_to_desk';ch.progress=0;
+    ch.targetX=ch.deskX;ch.targetY=ch.deskY;
+    task.status='working';
+    spawnBubble(ch.x,ch.y-25,'收到！','#ffe4c0');
+  }else{
+    // 排队
+    spawnBubble(ch.x,ch.y-25,'排队中…','#ddd');
+  }
+  inp.value='';
+  updateTags();
+}
+function completeTask(ch){
+  ch.state='done';ch.progress=0;ch.animTimer=0;
+  if(ch.task){ch.task.status='done';ch.task=null;}
+  doneCount++;
+  document.getElementById('doneCount').textContent=doneCount;
+  spawnParticles(ch.x,ch.y-15,ch.lightColor,18,'up');
+  spawnBubble(ch.x,ch.y-35,'搞定啦✨',ch.lightColor);
+  updateTags();
+  // 分配排队任务
+  setTimeout(()=>{
+    ch.state='idle';ch.wanderTimer=60+Math.random()*120;
+    ch.targetX=ch.homeX;ch.targetY=ch.homeY;
+    assignPendingTask(ch);
+  },1800);
+}
+function assignPendingTask(ch){
+  let pending=tasks.find(t=>t.status==='pending'&&t.charId===ch.id);
+  if(pending){
+    ch.task=pending;ch.state='walking_to_desk';ch.progress=0;
+    ch.targetX=ch.deskX;ch.targetY=ch.deskY;
+    pending.status='working';
+    updateTags();
+  }
+}
+function updateTags(){
+  CHARS.forEach(ch=>{
+    let el=null;
+    if(ch.id==='writer')el=document.getElementById('tagWriter');
+    if(ch.id==='explorer')el=document.getElementById('tagExplorer');
+    if(ch.id==='dreamer')el=document.getElementById('tagDreamer');
+    if(!el)return;
+    let icons={writer:'✍️',explorer:'🔍',dreamer:'🎨'};
+    let names={writer:'执笔人',explorer:'探路者',dreamer:'造梦师'};
+    let stText=ch.state==='working'?'工作中':ch.state==='done'?'完成啦':ch.state==='walking_to_desk'?'前往工位':'空闲';
+    el.textContent=`${icons[ch.id]} ${names[ch.id]} · ${stText}`;
+    el.classList.toggle('working',ch.state==='working'||ch.state==='walking_to_desk');
+  });
+}
+
+// ==================== 绘制系统 ====================
+function drawWalls(){
+  // 墙壁
+  ctx.fillStyle='#fef5e8';
+  ctx.fillRect(ROOM.x,ROOM.y,ROOM.w,ROOM.h);
+  ctx.strokeStyle='#e0d0b8';ctx.lineWidth=3;
+  ctx.strokeRect(ROOM.x,ROOM.y,ROOM.w,ROOM.h);
+  // 内墙线
+  ctx.strokeStyle='#eae0d0';ctx.lineWidth=1;
+  ctx.strokeRect(ROOM.x+8,ROOM.y+8,ROOM.w-16,ROOM.h-16);
+}
+function drawFloor(){
+  let g=ctx.createLinearGradient(0,FLOOR_Y,0,H);
+  g.addColorStop(0,'#dcc8a8');g.addColorStop(.3,'#d4a574');
+  g.addColorStop(.7,'#c89562');g.addColorStop(1,'#b88550');
+  ctx.fillStyle=g;
+  ctx.fillRect(ROOM.x,FLOOR_Y,ROOM.w,ROOM.h-FLOOR_Y+ROOM.y);
+  // 木纹
+  ctx.strokeStyle='rgba(180,130,90,.25)';ctx.lineWidth=.8;
+  for(let y=FLOOR_Y+8;y<ROOM.y+ROOM.h;y+=16){
+    ctx.beginPath();ctx.moveTo(ROOM.x+4,y);
+    for(let x=ROOM.x+4;x<ROOM.x+ROOM.w;x+=60){
+      ctx.lineTo(x+60,y+Math.sin(x*.005+y*.03)*2);
+    }ctx.stroke();
+  }
+  // 踢脚线
+  ctx.fillStyle='#c4a080';ctx.fillRect(ROOM.x,FLOOR_Y-2,ROOM.w,6);
+}
+function drawDesk(d){
+  let{cx,cy,w,h}=d;
+  // 阴影
+  ctx.fillStyle='rgba(0,0,0,.06)';ctx.beginPath();
+  ctx.ellipse(cx,cy+5,w/2+8,7,0,0,Math.PI*2);ctx.fill();
+  // 桌面
+  ctx.fillStyle='#a07840';ctx.beginPath();
+  ctx.roundRect(cx-w/2,cy-h/2,w,h,6);ctx.fill();
+  ctx.strokeStyle='#7a5030';ctx.lineWidth=2;ctx.stroke();
+  // 桌面木纹
+  ctx.fillStyle='#b89050';
+  ctx.fillRect(cx-w/2+6,cy-12,w-12,24);
+  ctx.strokeStyle='#8a6030';ctx.lineWidth=.6;
+  for(let i=-8;i<=8;i+=5){ctx.beginPath();ctx.moveTo(cx-w/2+8,cy+i);ctx.lineTo(cx+w/2-8,cy+i);ctx.stroke();}
+  // 桌腿
+  ctx.fillStyle='#7a5030';
+  ['left','right'].forEach(s=>{
+    let lx=s==='left'?cx-w/2+8:cx+w/2-12;
+    ctx.fillRect(lx,cy+h/2,10,22);
+  });
+}
+function drawDeskProps(d,ch){
+  let{cx,cy}=d;
+  if(ch.id==='writer'){
+    // 小台灯
+    let lampX=cx+35,lampY=cy-22;
+    ctx.fillStyle='#8a6030';ctx.fillRect(lampX-3,lampY,6,12); // 灯杆
+    ctx.fillStyle='#ffd590';ctx.beginPath();ctx.moveTo(lampX-10,lampY-2);ctx.quadraticCurveTo(lampX,lampY-14,lampX+10,lampY-2);ctx.closePath();ctx.fill();
+    if(ch.state==='working'||ch.state==='done'){
+      let lg=ctx.createRadialGradient(lampX,lampY-6,4,lampX,lampY-6,40);
+      lg.addColorStop(0,'rgba(255,230,160,.5)');lg.addColorStop(.5,'rgba(255,210,120,.15)');lg.addColorStop(1,'rgba(255,200,100,0)');
+      ctx.fillStyle=lg;ctx.beginPath();ctx.arc(lampX,lampY-6,40,0,Math.PI*2);ctx.fill();
+    }
+    // 书本
+    ctx.fillStyle='#e8c090';ctx.fillRect(cx-40,cy-8,18,4);
+    ctx.fillStyle='#d4a870';ctx.fillRect(cx-38,cy-12,18,5);
+    ctx.fillStyle='#c87850';ctx.fillRect(cx-20,cy-8,14,3.5);
+    // 笔筒
+    ctx.fillStyle='#8a6030';ctx.fillRect(cx-45,cy+5,12,18);
+    ctx.fillStyle='#ffe4c0';ctx.fillRect(cx-43,cy+3,3,14);
+    ctx.fillStyle='#ffb3ba';ctx.fillRect(cx-38,cy+2,3,15);
+  }else if(ch.id==='explorer'){
+    // 软木板
+    let bx=cx,by=cy-30;
+    ctx.fillStyle='#c4956a';ctx.fillRect(bx-45,by,90,68);
+    ctx.strokeStyle='#8a6030';ctx.lineWidth=3;ctx.strokeRect(bx-45,by,90,68);
+    // 便签
+    let noteColors=['#ffe8a0','#ffd1dc','#c8e8ff','#d4f0c0'];
+    for(let i=0;i<5;i++){
+      let nx=bx-30+(i%3)*28,ny=by+8+Math.floor(i/3)*28;
+      ctx.fillStyle=noteColors[i];ctx.fillRect(nx,ny,22,18);
+      ctx.fillStyle='rgba(0,0,0,.15)';ctx.fillRect(nx+2,ny+4,10,1.5);ctx.fillRect(nx+2,ny+8,14,1.5);ctx.fillRect(nx+2,ny+12,8,1.5);
+    }
+    // 图钉
+    for(let i=0;i<5;i++){
+      let nx=bx-30+(i%3)*28,ny=by+8+Math.floor(i/3)*28;
+      ctx.fillStyle='#e04040';ctx.beginPath();ctx.arc(nx+11,ny-2,2.5,0,Math.PI*2);ctx.fill();
+    }
+    // 放大镜
+    ctx.strokeStyle='#8a6030';ctx.lineWidth=2.5;ctx.beginPath();ctx.arc(cx+35,cy+15,10,0,Math.PI*2);ctx.stroke();
+    ctx.fillStyle='#c8e8ff44';ctx.beginPath();ctx.arc(cx+35,cy+15,8,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#8a6030';ctx.fillRect(cx+35,cy+25,5,12);
+  }else if(ch.id==='dreamer'){
+    // 小画架
+    let ex=cx,ey=cy-25;
+    ctx.fillStyle='#a08050';ctx.fillRect(ex-30,ey-5,4,45);ctx.fillRect(ex+26,ey-5,4,45);
+    // 画布
+    ctx.fillStyle='#fefefe';ctx.fillRect(ex-26,ey-15,52,40);
+    ctx.strokeStyle='#ccc';ctx.lineWidth=1;ctx.strokeRect(ex-26,ey-15,52,40);
+    if(ch.state==='working'||ch.state==='done'){
+      // 画布上的图案
+      ctx.globalAlpha=.7;
+      let colors=['#ff8c42','#5ba4cf','#c77dba','#ffb380','#ffd1dc'];
+      for(let i=0;i<6;i++){
+        ctx.fillStyle=colors[i];
+        ctx.beginPath();ctx.arc(ex-10+(i%3)*18,ey+(Math.floor(i/3))*12,5+Math.sin(time*.02+i)*2,0,Math.PI*2);ctx.fill();
+      }
+      ctx.globalAlpha=1;
+    }
+    // 调色盘
+    ctx.fillStyle='#d4a574';ctx.beginPath();ctx.ellipse(cx+32,cy+18,18,12,0,0,Math.PI*2);ctx.fill();
+    let pal=['#ff8c42','#5ba4cf','#c77dba','#ffd1dc','#ffe8a0'];
+    pal.forEach((c,i)=>{ctx.fillStyle=c;ctx.beginPath();ctx.arc(cx+22+i*5,cy+14,3.5,0,Math.PI*2);ctx.fill();});
+    // 画笔
+    ctx.fillStyle='#8a6030';ctx.fillRect(cx+28,cy+5,2.5,18);
+    ctx.fillStyle='#e8c090';ctx.beginPath();ctx.arc(cx+29,cy+5,3.5,0,Math.PI*2);ctx.fill();
+  }
+}
+function drawBlackboard(){
+  let w=BLACKBOARD.w,h=BLACKBOARD.h;
+  let bx2=ROOM.x+(ROOM.w-w)/2,by2=BLACKBOARD.y;
+  // 木框
+  ctx.fillStyle='#5a3a20';ctx.fillRect(bx2-4,by2-4,w+8,h+8);
+  ctx.strokeStyle='#3a2210';ctx.lineWidth=2;ctx.strokeRect(bx2-4,by2-4,w+8,h+8);
+  // 板面
+  ctx.fillStyle='#2d4030';ctx.fillRect(bx2,by2,w,h);
+  ctx.strokeStyle='#1a2a1a';ctx.lineWidth=1;ctx.strokeRect(bx2,by2,w,h);
+  // 标题
+  ctx.fillStyle='#ffe4c0';ctx.font='bold 13px "Microsoft YaHei"';
+  ctx.textAlign='center';ctx.fillText('📋 今日任务',bx2+w/2,by2+18);
+  // 任务列表
+  ctx.font='10px "Microsoft YaHei"';ctx.textAlign='left';
+  let activeTasks=tasks.filter(t=>t.status!=='done');
+  let showTasks=activeTasks.slice(-5);
+  if(showTasks.length===0){
+    ctx.fillStyle='rgba(255,255,255,.25)';
+    ctx.fillText('  暂无任务，输入任务开始吧～',bx2+12,by2+35);
+  }else{
+    showTasks.forEach((t,i)=>{
+      let ch=CHARS.find(c=>c.id===t.charId);
+      let icon=ch?{writer:'✍️',explorer:'🔍',dreamer:'🎨'}[ch.id]:'📌';
+      let statusIcon=t.status==='working'?'⚡':'⏳';
+      ctx.fillStyle=t.status==='working'?'#ffe8a0':'rgba(255,255,255,.5)';
+      ctx.fillText(`${statusIcon} ${icon} ${t.text.slice(0,22)}`,bx2+12,by2+35+i*12);
+    });
+  }
+  ctx.textAlign='start';
+}
+function drawWindow(){
+  let wx=WINDOW.x,wy=WINDOW.y,ww=WINDOW.w,wh=WINDOW.h;
+  // 窗框
+  ctx.fillStyle='#5a3a20';ctx.fillRect(wx-3,wy-3,ww+6,wh+6);
+  // 玻璃（外面夜景）
+  let sg=ctx.createLinearGradient(wx,wy,wx,wy+wh);
+  sg.addColorStop(0,'#1a1a3e');sg.addColorStop(.5,'#2d1b4e');sg.addColorStop(1,'#2a1830');
+  ctx.fillStyle=sg;ctx.fillRect(wx,wy,ww,wh);
+  // 窗外小月亮
+  ctx.fillStyle='#ffeaa7';ctx.beginPath();ctx.arc(wx+ww/2,wy+18,6,0,Math.PI*2);ctx.fill();
+  // 小星星
+  for(let i=0;i<4;i++){
+    let tw=Math.sin(time*.04+i*2)*.5+.5;
+    ctx.fillStyle=`rgba(255,255,255,${.3+tw*.7})`;
+    ctx.beginPath();ctx.arc(wx+3+Math.random()*ww,y+8+Math.random()*wh,.8,0,Math.PI*2);ctx.fill();
+  }
+  // 窗格
+  ctx.strokeStyle='#5a3a20';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(wx+ww/2,wy);ctx.lineTo(wx+ww/2,wy+wh);ctx.stroke();
+  // 窗台
+  ctx.fillStyle='#a08050';ctx.fillRect(wx-4,wy+wh-2,ww+8,10);
+}
+function drawPlant(){
+  let px=PLANT.x+WINDOW.w/2,py=PLANT.y;
+  // 花盆
+  ctx.fillStyle='#d49060';ctx.beginPath();
+  ctx.moveTo(px-10,py);ctx.lineTo(px-7,py-18);ctx.lineTo(px+7,py-18);ctx.lineTo(px+10,py);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#b87048';ctx.fillRect(px-7,py-20,14,4);
+  // 叶子
+  plant.sway+=plant.swaySpd;
+  let sway=Math.sin(plant.sway)*2;
+  ctx.fillStyle='#7ab868';
+  let leaves=[
+    {dx:-8,dy:-28,s:10,rot:-.3},{dx:6,dy:-30,s:9,rot:.4},
+    {dx:-3,dy:-35,s:8,rot:-.1},{dx:4,dy:-38,s:7,rot:.5},
+    {dx:-10,dy:-22,s:7,rot:-.6},{dx:10,dy:-26,s:6,rot:.3},
+  ];
+  leaves.forEach(l=>{
+    ctx.save();ctx.translate(px+l.dx+sway,py+l.dy);ctx.rotate(l.rot);
+    ctx.beginPath();ctx.ellipse(0,0,l.s,l.s*.45,0,0,Math.PI*2);ctx.fill();
+    ctx.restore();
+  });
+}
+function drawDog(){
+  let{dx,dy}=dog;
+  // 身体（趴着）
+  ctx.fillStyle='#f0c090';
+  ctx.beginPath();ctx.ellipse(dx,dy,22,14,0,0,Math.PI*2);ctx.fill();
+  // 白色肚皮
+  ctx.fillStyle='#fef5e0';
+  ctx.beginPath();ctx.ellipse(dx,dy+4,14,8,0,0,Math.PI*2);ctx.fill();
+  // 头
+  ctx.fillStyle='#f0c090';
+  ctx.beginPath();ctx.arc(dx-18,dy-4,11,0,Math.PI*2);ctx.fill();
+  // 耳朵（三角）
+  ctx.fillStyle='#d49050';
+  ctx.beginPath();ctx.moveTo(dx-26,dy-16);ctx.lineTo(dx-22,dy-6);ctx.lineTo(dx-14,dy-12);ctx.closePath();ctx.fill();
+  // 眼睛（闭着 - 打盹）
+  ctx.strokeStyle='#3a2010';ctx.lineWidth=1.2;ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(dx-22,dy-6);ctx.lineTo(dx-18,dy-5);ctx.stroke();
+  // 鼻子
+  ctx.fillStyle='#3a2010';ctx.beginPath();ctx.arc(dx-16,dy-2,2,0,Math.PI*2);ctx.fill();
+  // 尾巴（卷曲）
+  ctx.strokeStyle='#f0c090';ctx.lineWidth=5;ctx.lineCap='round';
+  let tailWag=Math.sin(time*.05)*3;
+  ctx.beginPath();ctx.moveTo(dx+20,dy-3);ctx.quadraticCurveTo(dx+28+tailWag,dy-12,dx+22,dy-18);ctx.stroke();
+  // Zzz
+  if(Math.sin(time*.03)>.3){
+    ctx.fillStyle='rgba(100,80,60,.5)';ctx.font='9px "Microsoft YaHei"';
+    ctx.fillText('Z',dx-28,dy-22);ctx.fillText('z',dx-22,dy-28);ctx.fillText('z',dx-16,dy-32);
+  }
+  // 偶尔翻身
+  if(dog.flipTimer>0){dog.flipTimer--;ctx.globalAlpha=.5;ctx.fillStyle='#f0c090';ctx.beginPath();ctx.ellipse(dx+5,dy-3,14,10,-.3,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;}
+  if(Math.random()<.001)dog.flipTimer=30;
+  // 偶尔打哈欠
+  if(dog.yawnTimer>0){dog.yawnTimer--;ctx.fillStyle='#3a2010';ctx.beginPath();ctx.arc(dx-14,dy-2,4,0,Math.PI*2);ctx.fill();}
+  if(Math.random()<.0008)dog.yawnTimer=25;
+}
+function drawCharacter(ch){
+  let{x,y}=ch;
+  // 影子
+  ctx.fillStyle='rgba(0,0,0,.08)';ctx.beginPath();ctx.ellipse(x,y+14,9,3,0,0,Math.PI*2);ctx.fill();
+  // 身体
+  let bodyBob=ch.state==='working'?Math.sin(time*.08)*2:Math.sin(time*.04)*1;
+  ctx.fillStyle=ch.color;
+  ctx.beginPath();ctx.roundRect(x-8,y-2+bodyBob,16,20,5);ctx.fill();
+  // 衣服纹理
+  ctx.fillStyle=ch.lightColor+'44';
+  ctx.fillRect(x-5,y+4+bodyBob,10,3);
+  // 头
+  ctx.fillStyle='#ffe4c0';
+  ctx.beginPath();ctx.arc(x,y-12+bodyBob,10,0,Math.PI*2);ctx.fill();
+  // 眼睛
+  ctx.fillStyle='#3a2010';
+  ctx.beginPath();ctx.arc(x-3,y-14+bodyBob,1.8,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(x+3,y-14+bodyBob,1.8,0,Math.PI*2);ctx.fill();
+  // 微笑
+  ctx.strokeStyle='#c08060';ctx.lineWidth=.8;ctx.lineCap='round';
+  ctx.beginPath();ctx.arc(x,y-10+bodyBob,3.5,.2,Math.PI-.2);ctx.stroke();
+  // 手
+  ctx.strokeStyle=ch.color;ctx.lineWidth=4;ctx.lineCap='round';
+  let waveR=0,waveL=0;
+  if(ch.state==='done'){waveR=-.6;waveL=.6;}
+  ctx.beginPath();ctx.moveTo(x+7,y+2+bodyBob);ctx.lineTo(x+10,y+8+bodyBob+waveR*3);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(x-7,y+2+bodyBob);ctx.lineTo(x-10,y+8+bodyBob+waveL*3);ctx.stroke();
+  // 脚
+  ctx.fillStyle=ch.color;ctx.fillRect(x-5,y+17+bodyBob,6,5);ctx.fillRect(x+1,y+17+bodyBob,6,5);
+  // 气泡
+  if(ch.bubble&&ch.bubble.life>0){
+    let bb=ch.bubble;
+    let bx=x,by=y-30;
+    ctx.fillStyle=`rgba(0,0,0,${bb.life*.7})`;ctx.font='bold 11px "Microsoft YaHei"';
+    ctx.textAlign='center';
+    let tw=ctx.measureText(bb.text).width;
+    ctx.fillStyle=`rgba(255,255,255,${bb.life*.9})`;
+    ctx.beginPath();ctx.roundRect(bx-tw/2-6,by-10,tw+12,20,8);ctx.fill();
+    ctx.fillStyle=`rgba(0,0,0,${bb.life*.8})`;ctx.fillText(bb.text,bx,by+4);
+    ctx.textAlign='start';
+  }
+  // 完成举手
+  if(ch.state==='done'&&ch.animTimer<60){
+    ctx.fillStyle='#ffe4c0';ctx.beginPath();ctx.arc(x+10,y-20,4,0,Math.PI*2);ctx.fill();
+    // 小星星
+    ctx.fillStyle=ch.lightColor;ctx.beginPath();ctx.arc(x+14,y-24,3,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=ch.lightColor;ctx.beginPath();ctx.arc(x+6,y-26,2,0,Math.PI*2);ctx.fill();
+  }
+}
+
+// ==================== 绘制主函数 ====================
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // 房间外背景
+  ctx.fillStyle='#2a1810';ctx.fillRect(0,0,W,H);
+  drawWalls();drawFloor();
+  drawBlackboard();drawWindow();drawPlant();
+  // 书桌
+  Object.values(DESKS).forEach(d=>drawDesk(d));
+  // 书桌道具
+  CHARS.forEach(ch=>drawDeskProps(ch.desk,ch));
+  // 柴犬
+  drawDog();
+  // 角色
+  CHARS.forEach(ch=>drawCharacter(ch));
+  // 便签飞行
+  notes.forEach(n=>{
+    let px=n.fromX+(n.toX-n.fromX)*n.progress;
+    let py=n.fromY+(n.toY-n.fromY)*n.progress-20*Math.sin(n.progress*Math.PI);
+    ctx.fillStyle=n.color;ctx.globalAlpha=n.life;
+    ctx.fillRect(px-8,py-6,16,12);
+    ctx.fillStyle='rgba(0,0,0,.1)';ctx.fillRect(px-6,py-2,8,1.5);
+    ctx.globalAlpha=1;
+  });
+  // 粒子
+  particles.forEach(p=>{
+    ctx.globalAlpha=p.life;ctx.fillStyle=p.color;
+    ctx.beginPath();ctx.arc(p.x,p.y,p.size,0,Math.PI*2);ctx.fill();
+  });
+  ctx.globalAlpha=1;
+}
+
+// ==================== 更新逻辑 ====================
+function update(){
+  time++;
+  // 更新角色
+  CHARS.forEach(ch=>{
+    // 气泡衰减
+    if(ch.bubble){ch.bubble.life-=ch.bubble.decay;if(ch.bubble.life<=0)ch.bubble=null;}
+    ch.animTimer++;
+
+    if(ch.state==='idle'){
+      // 空闲溜达
+      ch.wanderTimer--;
+      if(ch.wanderTimer<=0){
+        if(ch.wanderPause>0){ch.wanderPause--;}
+        else{
+          // 随机目标
+          let margin=60;
+          ch.targetX=margin+Math.random()*(W-margin*2);
+          ch.targetY=90+Math.random()*(H-200);
+          // 避免走到别人桌子上
+          CHARS.forEach(other=>{
+            if(other!==ch&&other.state!=='idle'){
+              let dx2=ch.targetX-other.deskX,dy2=ch.targetY-other.deskY;
+              if(Math.abs(dx2)<70&&Math.abs(dy2)<60){ch.targetX+=dx2>0?60:-60;}
+            }
+          });
+          ch.wanderTimer=80+Math.random()*160;
+          ch.wanderPause=30+Math.random()*60;
+        }
+      }
+      // 移动
+      let dx=ch.targetX-ch.x,dy=ch.targetY-ch.y,dist=Math.hypot(dx,dy);
+      if(dist>1){ch.x+=dx/dist*.6;ch.y+=dy/dist*.6;}
+    }else if(ch.state==='walking_to_desk'){
+      let dx=ch.targetX-ch.x,dy=ch.targetY-ch.y,dist=Math.hypot(dx,dy);
+      if(dist<2){ch.state='working';ch.progress=0;updateTags();}
+      else{ch.x+=dx/dist*1.5;ch.y+=dy/dist*1.5;}
+    }else if(ch.state==='working'){
+      ch.progress+=ch.workSpeed;
+      // 工作粒子
+      if(Math.random()<.15){
+        let px=ch.desk.cx+(Math.random()-.5)*60,py=ch.desk.cy-20-Math.random()*30;
+        let colors=ch.id==='writer'?['#ffe4c0','#fff','#ffe8a0']:
+                   ch.id==='explorer'?['#ffe8a0','#ffd1dc','#c8e8ff']:
+                   ['#ffb3ba','#e0a8d8','#ffd1dc'];
+        particles.push({x:px,y:py,vx:(Math.random()-.5)*.5,vy:-.5-Math.random()*1.5,life:1,decay:.02+.03*Math.random(),size:1+Math.random()*2.5,color:colors[Math.floor(Math.random()*3)]});
+      }
+      if(ch.progress>=1)completeTask(ch);
+    }else if(ch.state==='done'){
+      if(ch.animTimer>90){ch.state='idle';ch.wanderTimer=60;ch.targetX=ch.homeX;ch.targetY=ch.homeY;updateTags();assignPendingTask(ch);}
+    }
+  });
+  // 更新粒子
+  particles.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.life-=p.decay;});
+  particles=particles.filter(p=>p.life>0);
+  if(particles.length>120)particles=particles.slice(-100);
+  // 更新便签
+  notes.forEach(n=>{n.progress+=n.speed;n.life-=.002;});
+  notes=notes.filter(n=>n.progress<1&&n.life>0);
+  // 更新气泡
+  bubbles.forEach(b=>{b.y+=b.vy;b.life-=b.decay;});
+  bubbles=bubbles.filter(b=>b.life>0);
+}
+function gameLoop(){update();draw();requestAnimationFrame(gameLoop);}
+
+// ==================== 初始化 ====================
+document.getElementById('taskInput').addEventListener('keydown',e=>{if(e.key==='Enter')addTask();});
+updateTags();
+gameLoop();
+</script>
+</body>
+</html>
